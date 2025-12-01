@@ -1,70 +1,61 @@
 python
 import json
 from datetime import datetime
-from typing import Dict, Any
 
 class Logger:
     def __init__(self, file_path: str):
         self.file_path = file_path
 
     def _write(self, level: str, message: str):
-        """Write log entry with timestamp"""
-        timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now().isoformat()
         line = f"[{timestamp}] [{level}] {message}\n"
         with open(self.file_path, "a") as f:
             f.write(line)
 
     def info(self, message: str):
-        """Log informational message"""
+        timestamp = datetime.now().isoformat()
+        print(f"[{timestamp}] [INFO] {message}") 
         self._write("INFO", message)
 
     def error(self, message: str):
-        """Log error message"""
+        timestamp = datetime.now().isoformat()
+        print(f"[{timestamp}] [ERROR] {message}")
         self._write("ERROR", message)
 
 
-def load_config(path: str) -> Dict[str, Any]:
-    """Load configuration with error handling and defaults"""
+def load_config(path: str):
     default_config = {
-        "debug_mode": False,
-        "max_users": 1000,
-        "timeout_seconds": 30,
         "discount_rate": 0.1,
-        "age_threshold": 40
+        "age_threshold": 40,
+        "debug_mode": False
     }
 
     try:
         with open(path, "r") as f:
             raw = f.read()
     except FileNotFoundError:
-        print(f"Config file '{path}' not found, using defaults")
+        print(f"Config file '{path}' not found. Using default configuration.")
         return default_config
-        
+
     try:
         data = json.loads(raw)
-        
-        # Validate required fields
-        if "discount_rate" not in data:
-            raise ValueError("Missing required field 'discount_rate'")
-            
-        return {**default_config, **data}
     except json.JSONDecodeError:
-        print(f"Failed to parse config file '{path}', using defaults")
+        print(f"Invalid JSON format in config file '{path}'. Using default configuration.")
         return default_config
-
-
-def reload_config(path: str) -> Dict[str, Any]:
-    """Reload configuration from file"""
-    return load_config(path)
-
-
-def filter_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Filter sensitive configuration values"""
-    filtered = {}
-    sensitive_keys = ["database_password", "secret_key"]
     
-    for key, value in config.items():
-        if key not in sensitive_keys:
-            filtered[key] = value
-            
-    return filtered
+    # Merge with defaults to ensure required fields
+    merged_config = {**default_config, **data}
+    return merged_config
+
+
+def mask_sensitive_data(data: dict) -> dict:
+    """Masks sensitive values in dictionary"""
+    masked = {}
+    for key, value in data.items():
+        if key.endswith(("_password", "_secret", "_token")):
+            masked[key] = "***MASKED***"
+        elif isinstance(value, dict):
+            masked[key] = mask_sensitive_data(value)
+        else:
+            masked[key] = value
+    return masked
