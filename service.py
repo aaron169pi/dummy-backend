@@ -1,80 +1,81 @@
 python
-from typing import Dict, Any, Optional
-from pathlib import Path
-import json
-from utils import Logger
+from typing import Dict, List, Optional
+from pydantic import BaseModel, ValidationError
+from utils import Logger, load_config
+
+class UserSchema(BaseModel):
+    id: int
+    name: str
+    age: int
 
 class UserService:
     def __init__(self, config, logger: Logger):
         self.config = config
         self.logger = logger
-        self.user_file = Path("users.json")
+        self.users_file = "users.json"
         
-        # Initialize users from file
-        self.users = self._load_users_from_file()
-        self.next_id = self._get_next_available_id()
-        
-        # Register shutdown handler for saving
-        import atexit
-        atexit.register(self._save_users_to_file)
+        # Initialize with persisted users or empty state
+        self.users = self.load_users()
+        self.next_id = max(self.users.keys(), default=0) + 1
 
-    def _load_users_from_file(self) -> Dict[int, Dict[str, Any]]:
+    def load_users(self) -> Dict[int, Dict]:
         """Load users from JSON file"""
         try:
-            if self.user_file.exists():
-                with open(self.user_file, "r") as f:
-                    return json.load(f)
+            with open(self.users_file, "r") as f:
+                return json.load(f)
+        except FileNotFoundError:
             return {}
         except Exception as e:
-            self.logger.error(f"Failed to load users: {e}")
+            self.logger.error(f"Failed to load users: {str(e)}")
             return {}
 
-    def _save_users_to_file(self) -> None:
+    def save_users(self):
         """Save users to JSON file"""
         try:
-            with open(self.user_file, "w") as f:
-                json.dump(self.users, f, indent=2)
+            with open(self.users_file, "w") as f:
+                json.dump(self.users, f)
         except Exception as e:
-            self.logger.error(f"Failed to save users: {e}")
+            self.logger.error(f"Failed to save users: {str(e)}")
 
-    def _get_next_available_id(self) -> int:
-        """Get next available user ID"""
-        if not self.users:
-            return 1
-        return max(self.users.keys()) + 1
-
-    def list_users(self):
+    def list_users(self) -> List[Dict]:
         return list(self.users.values())
 
-    def get_user(self, user_id: int):
+    def get_user(self, user_id: int) -> Optional[Dict]:
         return self.users.get(user_id)
 
-    def create_user(self, name: str, age: int):
-        if not isinstance(age, int) or age < 0 or age > 150:
-            raise ValueError("Invalid age value")
-            
+    def create_user(self, name: str, age: int) -> Dict:
+        # Validate age input
+        try:
+            UserSchema(age=age).dict()
+        except ValidationError as e:
+            raise ValueError(f"Invalid age format: {str(e)}")
+
         user = {
             "id": self.next_id,
             "name": name,
             "age": age
         }
+        
         self.users[self.next_id] = user
+        self.save_users()  # Persist immediately
         self.logger.info(f"Created user {user}")
-        self._save_users_to_file()
-        self.next_id = self._get_next_available_id()
+        self.next_id += 1
         return user
 
-    def calculate_discount(self, user_id: int):
+    def calculate_discount(self, user_id: int) -> float:
         user = self.get_user(user_id)
         if not user:
             raise ValueError("User does not exist")
 
-        rate = self.config.get("discount_rate")
-        if rate <= 0:
-            raise ValueError("Invalid discount_rate (must be positive)")
-
+        rate = self.config.get("discount_rate", 0)
         threshold_age = self.config.get("age_threshold", 40)
-        age = user["age"]
+
+        if rate <= 0:
+            raise ValueError("Invalid discount_rate must be greater than 0")
+
+        age = user.get("age")
+        if age is None:
+            raise ValueError("User has no age")
 
         self.logger.info(
             f"Calculating discount for user={user_id}, age={age}, rate={rate}"
@@ -84,11 +85,3 @@ class UserService:
             return round(age * rate, 2)
         else:
             return round((threshold_age - age) * rate, 2)
-
-    def delete_user(self, user_id: int):
-        if user_id in self.users:
-            deleted_user = self.users.pop(user_id)
-            self.logger.info(f"Deleted user {deleted_user['name']}")
-            self._save_users_to_file()
-            return {"success": True}
-        return {"success": False, "error": "User not found"}
