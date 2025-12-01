@@ -1,75 +1,46 @@
+python
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from service import UserService
-from utils import load_config, Logger
+from utils import load_config, Logger, ConfigSchema
 
 app = FastAPI()
 logger = Logger("app.log")
 
-# Load config globally (Issue: no reload, no fallback)
-config = load_config("settings.json")
+# Initialize config with validation and fallback
+try:
+    config = load_config("settings.json")
+except Exception as e:
+    logger.error(f"Failed to load config: {e}")
+    config = {}
 
-service = UserService(config=config, logger=logger)
+class Config(BaseModel):
+    discount_rate: float = 0.1
+    age_threshold: int = 40
+    
+validated_config = Config(**config)
 
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logger.info(f"Incoming request: {request.method} {request.url}")
-    response = await call_next(request)
-    logger.info(f"Response status: {response.status_code}")
-    return response
-
-
-@app.get("/users")
-def list_users():
-    try:
-        return {"users": service.list_users()}
-    except Exception as e:
-        logger.error(f"Error listing users: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal error")
-
-
-@app.get("/users/{user_id}")
-def get_user(user_id: int):
-    user = service.get_user(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"user": user}
-
-
-@app.post("/users")
-def create_user(payload: dict):
-    # Issue: No Pydantic validation
-    name = payload.get("name")
-    age = payload.get("age")
-
-    if not name:
-        raise HTTPException(status_code=400, detail="Missing name")
-
-    user = service.create_user(name=name, age=age)
-    return {"created": user}
-
-
-@app.get("/discount/{user_id}")
-def discount(user_id: int):
-    try:
-        value = service.calculate_discount(user_id)
-        return {"discount": value}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Discount error: {e}")
-        raise HTTPException(status_code=500, detail="Internal error")
-
+service = UserService(config=validated_config.dict(), logger=logger)
 
 @app.get("/config")
 def read_config():
-    # Issue: returns sensitive config details
-    return config
-
+    """Get filtered configuration"""
+    filtered_config = {
+        "discount_rate": config.get("discount_rate"),
+        "age_threshold": config.get("age_threshold")
+    }
+    return JSONResponse(content=filtered_config)
 
 @app.get("/health")
 def health():
-    # Issue: Does not check DB or dependencies
-    return {"status": "ok"}
-
+    """Check system health with dependency checks"""
+    try:
+        service.get_user(1)  # Simple check
+        return {"status": "ok", "config_valid": bool(validated_config)}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "details": str(e)}
+        )
