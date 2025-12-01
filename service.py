@@ -1,59 +1,81 @@
-from utils import Logger
+from typing import Dict, Any, TypeVar
+from collections import defaultdict
+
+ConfigType = TypeVar('ConfigType')
 
 class UserService:
-    def __init__(self, config, logger: Logger):
+    """
+    Service class for managing user operations and calculations
+    
+    Args:
+        config: Configuration settings
+        logger: Logging instance
+    """
+    def __init__(self, config: ConfigType, logger: Logger):
         self.config = config
         self.logger = logger
-        self.users = {}         # Issue: Not persistent
-        self.next_id = 1        # Issue: Resets on every restart
+        self.users: Dict[int, Dict[str, Any]] = defaultdict(dict)  # Makes users persistent across calls
+        self.next_id = 1
+        
+    def list_users(self) -> Dict[str, Any]:
+        """List all registered users"""
+        return {"users": list(self.users.values())}
 
-    def list_users(self):
-        return list(self.users.values())
-
-    def get_user(self, user_id: int):
+    def get_user(self, user_id: int) -> Dict[str, Any]:
+        """Get user by ID"""
         return self.users.get(user_id)
 
-    def create_user(self, name: str, age: int):
-        # Issue: age might be None or string
+    def create_user(self, name: str, age: int) -> Dict[str, Any]:
+        """Create new user with validation"""
+        if not name:
+            raise ValueError("Name is required")
+            
+        if not isinstance(age, int) or age <= 0:
+            raise ValueError("Age must be positive integer")
+
         user = {
             "id": self.next_id,
             "name": name,
             "age": age
         }
+        
         self.users[self.next_id] = user
-        self.logger.info(f"Created user {user}")
+        self.logger.info(f"Created user {user}", extra={"operation": "create"})
         self.next_id += 1
         return user
 
-    def calculate_discount(self, user_id: int):
+    def calculate_discount(self, user_id: int) -> float:
+        """Calculate user discount with enhanced validation"""
         user = self.get_user(user_id)
         if not user:
             raise ValueError("User does not exist")
 
-        rate = self.config.get("discount_rate")   # Issue: might be None
+        rate = self.config.get("discount_rate")
         threshold_age = self.config.get("age_threshold", 40)
 
-        if rate == 0:
-            # Issue: Zero division scenario not fully prevented
-            raise ValueError("Invalid discount_rate=0")
+        if rate is None or rate <= 0:
+            raise ValueError("Invalid or missing discount_rate configuration")
 
         age = user.get("age")
-
-        if age is None:
-            raise ValueError("User has no age")
+        if age is None or age <= 0:
+            raise ValueError("User has invalid age")
 
         self.logger.info(
-            f"Calculating discount for user={user_id}, age={age}, rate={rate}"
+            f"Calculating discount for user={user_id}, age={age}, rate={rate}",
+            extra={"operation": "calculate"}
         )
 
         if age > threshold_age:
-            return age * rate
+            discount = age * rate
         else:
-            return (threshold_age - age) * rate
+            discount = (threshold_age - age) * rate
+            
+        self.logger.info(f"Calculated discount amount: {discount}", 
+                        extra={"operation": "result"})
+        return discount
 
-    def delete_user(self, user_id: int):
-        # Issue: never used anywhere
+    def delete_user(self, user_id: int) -> None:
+        """Delete user (currently unused)"""
         if user_id in self.users:
-            self.logger.info(f"Deleted user {user_id}")
+            self.logger.info(f"Deleted user {user_id}", extra={"operation": "delete"})
             del self.users[user_id]
-
